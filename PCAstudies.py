@@ -159,16 +159,17 @@ if __name__ == '__main__':
         file_imp.write("{}={}\n".format(i[0],i[1]))
     file_imp.close()
 
-    y_pred = model.predict(dtest)
-    output = pd.DataFrame({'id': ids.astype(np.int32), 'y': y_pred})
-    output.to_csv('PCA{}.csv'.format(timestamp),index=False)
+    if flagtest==False:
+        y_pred = model.predict(dtest)
+        output = pd.DataFrame({'id': ids.astype(np.int32), 'y': y_pred})
+        output.to_csv('PCA{}.csv'.format(timestamp),index=False)
 
     rest=dict()
     rest['test']=flagtest
     allparams['global']=rest
-    rest['R2']=r2_score(model.predict(dtrain), dtrain.get_label())
+    rest['R2']=r2_score(dtrain.get_label(),model.predict(dtrain))
     if flagtest:
-        rest['R2test']=r2_score(model.predict(dtest), dtest.get_label())
+        rest['R2test']=r2_score(dtest.get_label(),model.predict(dtest))
     WriteSettings("./test/settings{}.txt".format(timestamp),allparams,df_train.columns)
     if flagtest:
         out=pd.DataFrame({'train':logs['log']['rmse'],"test":logs['test']['rmse']})
