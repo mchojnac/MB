@@ -41,6 +41,8 @@ def InitSettings():
     others['scaleID']=0
     others['num_boost_rounds'] = 5500
     others['testfraction']=0.05
+    others['removecatfromPCA']=False
+    others['dumpresidual']=False
     allparams=dict()
     allparams['xgb']=param
     allparams['others']=others
@@ -90,35 +92,18 @@ if __name__ == '__main__':
 
     seed=allparams['xgb']['seed']
 
-    df_train,df_test=LoadandCleanData(allparams['others']['flagcat'],allparams['others']['flagcentering'],allparams['others']['cut'])
+    df_train,df_test,catcol=LoadandCleanData(allparams['others']['flagcat'],allparams['others']['flagcentering'],allparams['others']['cut'])
+    idstest=df_test['ID'].values
+    idstrain=df_train['ID'].values
 
-    if allparams['others']['RemoveID']:
-        df_train.drop("ID",axis=1,inplace=True)
-        df_test.drop("ID",axis=1,inplace=True)
+    columnsPCA=list()
+    for i in df_test.columns:
+        if i in catcol:
+            if allparams['others']['removecatfromPCA']:
+                continue
+        columnsPCA.append(i)
 
-    df_sum=pd.concat([df_train.drop("y",axis=1),df_test])
-
-    n_comp=allparams['others']['n_comp']
-    pca = PCA(n_components=n_comp, random_state=seed)
-    pca.fit_transform(df_sum)
-    pca2_results_test = pca.transform(df_test)
-    pca2_results_train = pca.transform(df_train.drop(["y"], axis=1))
-
-    ica = FastICA(n_components=n_comp, random_state=seed)
-    ica.fit_transform(df_sum)
-    ica2_results_test = ica.transform(df_test)
-    ica2_results_train = ica.transform(df_train.drop(["y"], axis=1))
-
-
-    for i in range(1, n_comp+1):
-        df_train['pca_' + str(i)] = pca2_results_train[:,i-1]
-        df_test['pca_' + str(i)] = pca2_results_test[:,i-1]
-
-        df_train['ica_' + str(i)] = ica2_results_train[:,i-1]
-        df_test['ica_' + str(i)] = ica2_results_test[:, i-1]
-
-
-
+    df_train,df_test=DoPCAICA(df_train,df_test,allparams,columnsPCA)
 
     y_test=df_train["y"]
     y_train = df_train["y"]
@@ -135,12 +120,14 @@ if __name__ == '__main__':
         df_train,df_test,y_train,y_test=train_test_split(df_train,y_train,test_size=frac,random_state=seed)
         dtrain = xgb.DMatrix(df_train.drop('y', axis=1), y_train)
         dtest = xgb.DMatrix(df_test.drop('y', axis=1), y_test)
+        idstest=df_test['ID'].values
+        idstrain=df_train['ID'].values
         watchlist  = [(dtrain,'log'),(dtest,'test')]
     else:
         dtrain = xgb.DMatrix(df_train.drop('y', axis=1), y_train)
         dtest = xgb.DMatrix(df_test)
         watchlist  = [(dtrain,'log')]
-    ids=df_test['ID'].values
+
     y_mean = np.mean(y_train)
 
     logs=dict()
@@ -159,9 +146,9 @@ if __name__ == '__main__':
         file_imp.write("{}={}\n".format(i[0],i[1]))
     file_imp.close()
 
+    y_pred = model.predict(dtest)
     if flagtest==False:
-        y_pred = model.predict(dtest)
-        output = pd.DataFrame({'id': ids.astype(np.int32), 'y': y_pred})
+        output = pd.DataFrame({'id': idstest.astype(np.int32), 'y': y_pred})
         output.to_csv('PCA{}.csv'.format(timestamp),index=False)
 
     rest=dict()
@@ -176,3 +163,17 @@ if __name__ == '__main__':
     else:
         out=pd.DataFrame({'train':logs['log']['rmse']})
     out.to_csv("./test/logs{}.csv".format(timestamp), index = False, header = True)
+
+    if allparams['others']['dumpresidual']:
+        dtrain2 = xgb.DMatrix(df_train.drop('y', axis=1))
+        ytrainpred=  model.predict(dtrain2)
+        trainres=list()
+
+        df_restrain=pd.DataFrame({'ID2':idstrain,'ypred':ytrainpred})
+        df_restest=pd.DataFrame({'ID2':idstest,'ypred':y_pred})
+
+        df_train=pd.concat([df_train,df_restrain],axis=1)
+        df_test=pd.concat([df_test,df_restest],axis=1)
+
+        df_train.to_csv("./res{}train.csv".format(timestamp), index = False, header = True)
+        df_test.to_csv("./res{}test.csv".format(timestamp), index = False, header = True)

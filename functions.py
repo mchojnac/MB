@@ -6,7 +6,7 @@ import random
 from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
 from scipy.sparse import csr_matrix,hstack
 from sklearn.preprocessing import LabelEncoder,OneHotEncoder
-
+from sklearn.decomposition import PCA, FastICA
 
 
 
@@ -79,6 +79,13 @@ def Encode(df,column,maptouse):
     print(names)
     return pd.DataFrame(values,columns=names)
 
+def MapUsingMeans(df,name):
+    mean= df[[name, 'y']].groupby([name], as_index=False).mean()
+    mean_sorted=mean.sort_values('y')
+    mean_sorted.reset_index(drop=True,inplace=True)
+    dictformap={mean_sorted[name].values[i]:i for i in range(len(mean_sorted))}
+    df[name]=df[name].map(dictformap)
+    return df,dictformap
 
 def LoadandCleanData(flagcat=True,flagcentering=0,cut=0,scaleID=0):
     df_train = pd.read_csv('train.csv')
@@ -119,19 +126,36 @@ def LoadandCleanData(flagcat=True,flagcentering=0,cut=0,scaleID=0):
     df_train.drop(toremove,axis=1,inplace=True)
     df_test.drop(toremove,axis=1,inplace=True)
     if flagcat:
+        catcol2=[]
         for i,idict in zip(catcol,dictionaries):
-            df_train=pd.concat([df_train,Encode(df_train,i,idict)],axis=1)
-            df_test=pd.concat([df_test,Encode(df_test,i,idict)],axis=1)
+            df_tmp_train=Encode(df_train,i,idict)
+            df_tmp_test=Encode(df_test,i,idict)
+            for k in df_tmp_train.columns:
+                catcol2.append(k)
+            #catcol2=catcol2+df_tmp.columns
+            df_train=pd.concat([df_train,df_tmp_train],axis=1)
+            df_test=pd.concat([df_test,df_tmp_test],axis=1)
         df_train.drop(catcol,axis=1,inplace=True)
         df_test.drop(catcol,axis=1,inplace=True)
-        df_train,df_test=RemoveDuplicats(df_train,df_test)
-        df_train,df_test=CleanLowVar(df_train,df_test,cut)
+        df_train,df_test,toremove=RemoveDuplicats(df_train,df_test)
+        for i in toremove:
+            if i in catcol2:
+                catcol2.remove(i)
+        df_train,df_test,toremove=CleanLowVar(df_train,df_test,cut)
+        for i in toremove:
+            if i in catcol2:
+                catcol2.remove(i)
+        del catcol
+        catcol=catcol2
     else:
-        df_train,df_test=RemoveDuplicats(df_train,df_test)
-        df_train,df_test=CleanLowVar(df_train,df_test,cut,catcol)
+        df_train,df_test,toremove=RemoveDuplicats(df_train,df_test)
+        df_train,df_test,toremove=CleanLowVar(df_train,df_test,cut,catcol)
         for i,idict in zip(catcol,dictionaries):
-            df_train[i]=df_train[i].map(idict)
-            df_test[i]=df_test[i].map(idict)
+            #df_train[i]=df_train[i].map(idict)
+            #df_test[i]=df_test[i].map(idict)
+            df_train,tmpdict=MapUsingMeans(df_train,i)
+            df_test[i]=df_test[i].map(tmpdict)
+            df_test[i]=df_test[i].apply(lambda x: df_train['y'].mean() if x!=float(x) else x)
             if flagcentering<1:
                 continue
             l=len(idict)
@@ -142,7 +166,7 @@ def LoadandCleanData(flagcat=True,flagcentering=0,cut=0,scaleID=0):
                 df_train[i]=df_train[i].apply(lambda x: (x-0.5*l)/(0.5*l))
                 df_test[i]=df_test[i].apply(lambda x: (x-0.5*l)/(0.5*l))
 
-    return df_train,df_test
+    return df_train,df_test,catcol
 
 def RemoveDuplicats(df_train,df_test):
     toremove=list()
@@ -152,7 +176,7 @@ def RemoveDuplicats(df_train,df_test):
     #print(toremove)
     df_train.drop(toremove,axis=1,inplace=True)
     df_test.drop(toremove,axis=1,inplace=True)
-    return df_train,df_test
+    return df_train,df_test,toremove
 
 def Encode(df,column,maptouse):
     values=np.zeros([len(df),len(maptouse)],dtype=int)
@@ -166,7 +190,7 @@ def Encode(df,column,maptouse):
 
 def CleanLowVar(df_train,df_test,cut,toskip=[]):
     if cut>=1.0 or cut<=0.0:
-        return df_train,df_test
+        return df_train,df_test,[]
     if cut>0.5:
         cut=1.0-cut
     toremove=list()
@@ -177,4 +201,34 @@ def CleanLowVar(df_train,df_test,cut,toskip=[]):
             toremove.append(i)
     df_train.drop(toremove,axis=1,inplace=True)
     df_test.drop(toremove,axis=1,inplace=True)
+    return df_train,df_test,toremove
+
+def DoPCAICA(df_train,df_test,allparams,columns,name="rest"):
+    seed=allparams['xgb']['seed']
+    if allparams['others']['RemoveID']:
+        df_train.drop("ID",axis=1,inplace=True)
+        df_test.drop("ID",axis=1,inplace=True)
+
+    df_sum=pd.concat([df_train.drop("y",axis=1),df_test])
+    #col=[]
+    #if allparams['others']['removecatfromPCA']:
+    #    col=["X0","X1","X2","X3","X4","X5","X6","X8"]
+    n_comp=allparams['others']['n_comp']
+    pca = PCA(n_components=n_comp, random_state=seed)
+    pca.fit_transform(df_sum[columns])
+
+    pca2_results_test = pca.transform(df_test[columns])
+    pca2_results_train = pca.transform(df_train[columns])
+
+    ica = FastICA(n_components=n_comp, random_state=seed)
+    ica.fit_transform(df_sum[columns])
+    ica2_results_test = ica.transform(df_test[columns])
+    ica2_results_train = ica.transform(df_train[columns])
+
+    for i in range(1, n_comp+1):
+        df_train['pca_'+name+ str(i)] = pca2_results_train[:,i-1]
+        df_test['pca_' +name+ str(i)] = pca2_results_test[:,i-1]
+
+        df_train['ica_'+name+ str(i)] = ica2_results_train[:,i-1]
+        df_test['ica_'+name+ str(i)] = ica2_results_test[:, i-1]
     return df_train,df_test
