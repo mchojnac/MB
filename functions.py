@@ -228,7 +228,12 @@ def DoPCAICA(df_train,df_test,allparams,columns,name="rest"):
     for i in range(1, n_comp+1):
         df_train['pca_'+name+ str(i)] = pca2_results_train[:,i-1]
         df_test['pca_' +name+ str(i)] = pca2_results_test[:,i-1]
+        #df_train['pca2_'+name+ str(i)] = pca2_results_train[:,i-1]*pca2_results_train[:,i-1]
+        #df_test['pca2_' +name+ str(i)] = pca2_results_test[:,i-1]*pca2_results_test[:,i-1]
 
         df_train['ica_'+name+ str(i)] = ica2_results_train[:,i-1]
         df_test['ica_'+name+ str(i)] = ica2_results_test[:, i-1]
+        #df_train['ica2_'+name+ str(i)] = ica2_results_train[:,i-1]*ica2_results_train[:,i-1]
+        #df_test['ica2_'+name+ str(i)] = ica2_results_test[:, i-1]*ica2_results_test[:, i-1]
+
     return df_train,df_test

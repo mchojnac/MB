@@ -169,8 +169,8 @@ if __name__ == '__main__':
         ytrainpred=  model.predict(dtrain2)
         trainres=list()
 
-        df_restrain=pd.DataFrame({'ID2':idstrain,'ypred':ytrainpred})
-        df_restest=pd.DataFrame({'ID2':idstest,'ypred':y_pred})
+        df_restrain=pd.DataFrame({'ID2':idstrain,'ypred':ytrainpred,'y':y_train})
+        df_restest=pd.DataFrame({'ID2':idstest,'ypred':y_pred,'y':y_test})
 
         df_train=pd.concat([df_train,df_restrain],axis=1)
         df_test=pd.concat([df_test,df_restest],axis=1)
