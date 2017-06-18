@@ -93,6 +93,7 @@ if __name__ == '__main__':
     seed=allparams['xgb']['seed']
 
     df_train,df_test,catcol=LoadandCleanData(allparams['others']['flagcat'],allparams['others']['flagcentering'],allparams['others']['cut'])
+    #df_train,df_test,part=RemoveDuplicatsRows(df_train,df_test)
     idstest=df_test['ID'].values
     idstrain=df_train['ID'].values
 
@@ -101,12 +102,14 @@ if __name__ == '__main__':
         if i in catcol:
             if allparams['others']['removecatfromPCA']:
                 continue
+        #if i=="ID":
+        #    continue
         columnsPCA.append(i)
 
     df_train,df_test=DoPCAICA(df_train,df_test,allparams,columnsPCA)
 
-    y_test=df_train["y"]
-    y_train = df_train["y"]
+    y_test=list(df_train["y"])
+    y_train =list (df_train["y"])
     if len(allparams['columns_for_remove'])>0:
         y_train.drop(allparams['columns_for_remove'],axis=1,inplace=True)
         y_test.drop(allparams['columns_for_remove'],axis=1,inplace=True)
@@ -148,7 +151,10 @@ if __name__ == '__main__':
 
     y_pred = model.predict(dtest)
     if flagtest==False:
-        output = pd.DataFrame({'id': idstest.astype(np.int32), 'y': y_pred})
+        y_predround=[i for i in y_pred]#+[i[1] for i in part]
+        #idsfinal=[int(round(i)) for i in idstest]+[int(round(i[0])) for i in part]
+        output = pd.DataFrame({'id': idstest.astype(np.int32), 'y': y_predround})
+        #output = pd.DataFrame({'id': idsfinal, 'y': y_predround})
         output.to_csv('PCA{}.csv'.format(timestamp),index=False)
 
     rest=dict()

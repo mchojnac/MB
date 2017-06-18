@@ -204,6 +204,7 @@ def CleanLowVar(df_train,df_test,cut,toskip=[]):
     return df_train,df_test,toremove
 
 def DoPCAICA(df_train,df_test,allparams,columns,name="rest"):
+    print(columns)
     seed=allparams['xgb']['seed']
     if allparams['others']['RemoveID']:
         df_train.drop("ID",axis=1,inplace=True)
@@ -237,3 +238,37 @@ def DoPCAICA(df_train,df_test,allparams,columns,name="rest"):
         #df_test['ica2_'+name+ str(i)] = ica2_results_test[:, i-1]*ica2_results_test[:, i-1]
 
     return df_train,df_test
+
+def RemoveDuplicatsRows(df_train,df_test):
+    columns=df_train.drop(["ID","y"],axis=1).columns.tolist()
+    Ltrain=df_train.groupby(columns).apply(lambda x: list(x.index)).tolist()
+    toremovetrain=list()
+    df_train['ID'] = df_train['ID'].astype(float)
+    df_test['ID'] = df_test['ID'].astype(float)
+    for i in Ltrain:
+        if len(i)>1:
+            ym=df_train.iloc[i]['y'].mean()
+            IDm=df_train.iloc[i]['ID'].mean()
+            df_train['y'].values[i[0]]=ym
+            df_train['ID'].values[i[0]]=IDm
+            toremovetrain=toremovetrain+i[1:]
+    df_train.drop(toremovetrain,inplace=True)
+    df_train_wy=df_train.drop("y",axis=1)
+    df_total=pd.concat([df_train_wy,df_test]).reset_index(drop=True)
+    Ltotal=df_total.groupby(columns).apply(lambda x: list(x.index)).tolist()
+    toremovetest=list()
+    tostored=list()
+    for i in Ltotal:
+        if len(i)>1:
+            flag=False
+            valuey=0.0
+            for j in i:
+                if j<len(df_train):
+                    flag=True
+                    valuey=df_train['y'].values[j]
+                if j>=len(df_train) and flag:
+                    tostored.append((df_total['ID'].values[j],valuey))
+                    toremovetest.append(j-len(df_train))
+    df_test.drop(toremovetest,inplace=True)
+    df_test.reset_index(inplace=True,drop=True)
+    return df_train,df_test,tostored
