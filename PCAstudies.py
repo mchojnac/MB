@@ -17,7 +17,7 @@ from sklearn.decomposition import PCA, FastICA
 from sklearn.metrics import r2_score
 import datetime as dt
 import operator
-
+from tqdm import tqdm
 def InitSettings():
     param = dict()
 
@@ -43,16 +43,23 @@ def InitSettings():
     others['testfraction']=0.05
     others['removecatfromPCA']=False
     others['dumpresidual']=False
+    others['removeoutliers']=False
+    others['Ntry']=100
     allparams=dict()
     allparams['xgb']=param
     allparams['others']=others
     allparams['columns_for_remove']=[]
     return allparams
 
+
+
+
+
 if __name__ == '__main__':
     timestamp=dt.datetime.now().strftime('%Y%m%d_%H_%M_%S')
 
     flagtest=False
+
 
     if len(sys.argv)>=3:
         filename = sys.argv[1]
@@ -91,65 +98,115 @@ if __name__ == '__main__':
 
 
     seed=allparams['xgb']['seed']
+    Ntry=allparams['others']['Ntry']
 
-    df_train,df_test,catcol=LoadandCleanData(allparams['others']['flagcat'],allparams['others']['flagcentering'],allparams['others']['cut'])
+    df_train_based,df_test_based,catcol=LoadandCleanData(allparams['others']['flagcat'],allparams['others']['flagcentering'],allparams['others']['cut'])
+    if allparams['others']['removeoutliers']:
+        df_train_based=df_train_based[df_train_based['y']<200]
     #df_train,df_test,part=RemoveDuplicatsRows(df_train,df_test)
-    idstest=df_test['ID'].values
-    idstrain=df_train['ID'].values
+    idstest=df_test_based['ID'].values
+    idstrain=df_train_based['ID'].values
+    y_test=list(df_train_based["y"])
+    y_train_based =list (df_train_based["y"])
+
+    if len(allparams['columns_for_remove'])>0:
+        df_train_based.drop(allparams['columns_for_remove'],axis=1,inplace=True)
+        df_test_based.drop(allparams['columns_for_remove'],axis=1,inplace=True)
+
 
     columnsPCA=list()
-    for i in df_test.columns:
+    for i in df_test_based.columns:
         if i in catcol:
             if allparams['others']['removecatfromPCA']:
                 continue
-        #if i=="ID":
-        #    continue
+        if i=="ID" and allparams['others']['RemoveID']:
+            continue
         columnsPCA.append(i)
 
-    df_train,df_test=DoPCAICA(df_train,df_test,allparams,columnsPCA)
+    #if len(allparams['columns_for_remove'])>0:
+    #    y_train.drop(allparams['columns_for_remove'],axis=1,inplace=True)
+    #    y_test.drop(allparams['columns_for_remove'],axis=1,inplace=True)
 
-    y_test=list(df_train["y"])
-    y_train =list (df_train["y"])
-    if len(allparams['columns_for_remove'])>0:
-        y_train.drop(allparams['columns_for_remove'],axis=1,inplace=True)
-        y_test.drop(allparams['columns_for_remove'],axis=1,inplace=True)
 
+    pdimport=pd.DataFrame()
+    pdlogs1=pd.DataFrame()
+    pdlogs2=pd.DataFrame()
+    pdypred=pd.DataFrame()
+    r2list=list()
+    r2testlist=list()
+    seed=allparams['xgb']['seed']
+    todrop={"y"}
+    if allparams['others']['RemoveID']:
+        todrop.append("ID")
+
+    for i in tqdm(range(Ntry)):
+        allparams['xgb']['seed']=allparams['xgb']['seed']+10
+        #print(i,Ntry,allparams['xgb']['seed'])
+        df_train_pca,df_test_pca=DoPCAICA(df_train_based,df_test_based,allparams,columnsPCA)
+        #print(df_train_pca.columns)
+        if flagtest:
+            #del df_test
+            frac=allparams['others']['testfraction']
+            if frac<=0.0 or frac>1.0:
+                allparams['others']['testfraction']=0.05
+                frac=0.05
+            print(len(df_train_pca),len(y_train_based))
+            df_train,df_test,y_train,y_test=train_test_split(df_train_pca,y_train_based,test_size=frac,random_state=seed)
+            print(len(df_train),len(y_train))
+            dtrain = xgb.DMatrix(df_train.drop(todrop, axis=1), y_train)
+            dtest = xgb.DMatrix(df_test.drop(todrop, axis=1), y_test)
+            #idstest=df_test['ID'].values
+            #idstrain=df_train['ID'].values
+            watchlist  = [(dtrain,'log'),(dtest,'test')]
+        else:
+            y_train=y_train_based
+            dtrain = xgb.DMatrix(df_train_pca.drop(todrop, axis=1), y_train_based)
+            if allparams['others']['RemoveID']:
+                dtest = xgb.DMatrix(df_test_pca.drop("ID", axis=1))
+            else:
+                dtest = xgb.DMatrix(df_test_pca)
+            watchlist  = [(dtrain,'log')]
+
+        y_mean = np.mean(y_train)
+        logs=dict()
+        xgb_params=allparams['xgb']
+        xgb_params['base_score']=y_mean
+        model = xgb.train(xgb_params, dtrain,allparams['others']['num_boost_rounds'] ,watchlist,verbose_eval=1000,evals_result=logs)
+
+        imp=model.get_fscore()
+        pdimport=pd.concat([pdimport,pd.Series(imp,name=str(i))],axis=1)
+        pdlogs1=pd.concat([pdlogs1,pd.DataFrame({str(i):logs['log']['rmse']})],axis=1)
+        if flagtest:
+            pdlogs2=pd.concat([pdlogs2,pd.DataFrame({str(i):logs['test']['rmse']})],axis=1)
+
+        y_pred = model.predict(dtest)
+        pdypred=pd.concat([pdypred,pd.DataFrame({str(i):y_pred})],axis=1)
+
+    #rcParams['figure.figsize'] = 40, 40
+    #xgb.plot_importance(model)
+    #plt.savefig("./test/importance{}.png".format(timestamp))
+    #file_imp  = open("./test/importance{}.txt".format(timestamp), "w")
+        r2list.append(r2_score(dtrain.get_label(),model.predict(dtrain)))
+        print("{} R2={} ".format(i,r2list[-1]))
+        if flagtest:
+            r2testlist.append(r2_score(dtest.get_label(),model.predict(dtest)))
+            print("{} Rtest2={} ".format(i,r2testlist[-1]))
+        del model
+        del df_train_pca
+        del df_test_pca
+        if flagtest:
+            del df_train
+            del df_test
+        del dtrain
+        del dtest
+    pdimport=DumpMeanError(pdimport,"./test/importance",timestamp,True)
+    pdlogs1=DumpMeanError(pdlogs1,"./test/logs1",timestamp)
     if flagtest:
-        del df_test
-        frac=allparams['others']['testfraction']
-        if frac<=0.0 or frac>1.0:
-            allparams['others']['testfraction']=0.05
-            frac=0.05
-        df_train,df_test,y_train,y_test=train_test_split(df_train,y_train,test_size=frac,random_state=seed)
-        dtrain = xgb.DMatrix(df_train.drop('y', axis=1), y_train)
-        dtest = xgb.DMatrix(df_test.drop('y', axis=1), y_test)
-        idstest=df_test['ID'].values
-        idstrain=df_train['ID'].values
-        watchlist  = [(dtrain,'log'),(dtest,'test')]
-    else:
-        dtrain = xgb.DMatrix(df_train.drop('y', axis=1), y_train)
-        dtest = xgb.DMatrix(df_test)
-        watchlist  = [(dtrain,'log')]
+        pdlogs2pdlogs2=DumpMeanError(pdlogs2,"./test/logs2",timestamp)
+    pdypred=DumpMeanError(pdypred,"./test/pdypred",timestamp)
 
-    y_mean = np.mean(y_train)
+    y_pred=pdypred['mean'].values
 
-    logs=dict()
-    xgb_params=allparams['xgb']
-    xgb_params['base_score']=y_mean
-    model = xgb.train(xgb_params, dtrain,allparams['others']['num_boost_rounds'] ,watchlist,verbose_eval=50,evals_result=logs)
-
-
-    rcParams['figure.figsize'] = 40, 40
-    xgb.plot_importance(model)
-    plt.savefig("./test/importance{}.png".format(timestamp))
-    file_imp  = open("./test/importance{}.txt".format(timestamp), "w")
-    imp=model.get_fscore()
-    sorted_x = sorted(imp.items(), key=operator.itemgetter(1), reverse=True)
-    for i in sorted_x:
-        file_imp.write("{}={}\n".format(i[0],i[1]))
-    file_imp.close()
-
-    y_pred = model.predict(dtest)
     if flagtest==False:
         y_predround=[i for i in y_pred]#+[i[1] for i in part]
         #idsfinal=[int(round(i)) for i in idstest]+[int(round(i[0])) for i in part]
@@ -160,26 +217,31 @@ if __name__ == '__main__':
     rest=dict()
     rest['test']=flagtest
     allparams['global']=rest
-    rest['R2']=r2_score(dtrain.get_label(),model.predict(dtrain))
+    rest['R2']=np.mean(r2list)
+    rest['R2err']=np.std(r2list)
     if flagtest:
-        rest['R2test']=r2_score(dtest.get_label(),model.predict(dtest))
-    WriteSettings("./test/settings{}.txt".format(timestamp),allparams,df_train.columns)
+        rest['R2testlist']=np.mean(r2testlist)
+        rest['R2testerr']=np.std(r2testlist)
+    WriteSettings("./test/settings{}.txt".format(timestamp),allparams,df_train_based.columns)
+
+    fig, ax = plt.subplots()
+
+    plt.hist(r2list,bins=np.mgrid[0.5:0.8:0.002],color='red',alpha=0.5)
     if flagtest:
-        out=pd.DataFrame({'train':logs['log']['rmse'],"test":logs['test']['rmse']})
-    else:
-        out=pd.DataFrame({'train':logs['log']['rmse']})
-    out.to_csv("./test/logs{}.csv".format(timestamp), index = False, header = True)
+        plt.hist(r2testlist,bins=np.mgrid[0.5:0.8:0.002],color='green',alpha=0.5)
+    #plt.show()
+    plt.savefig("./test/R2_{}.png".format(timestamp))
 
-    if allparams['others']['dumpresidual']:
-        dtrain2 = xgb.DMatrix(df_train.drop('y', axis=1))
-        ytrainpred=  model.predict(dtrain2)
-        trainres=list()
+    #if allparams['others']['dumpresidual']:
+    #    dtrain2 = xgb.DMatrix(df_train.drop('y', axis=1))
+    #    ytrainpred=  model.predict(dtrain2)
+    #    trainres=list()
 
-        df_restrain=pd.DataFrame({'ID2':idstrain,'ypred':ytrainpred,'y':y_train})
-        df_restest=pd.DataFrame({'ID2':idstest,'ypred':y_pred,'y':y_test})
+    #    df_restrain=pd.DataFrame({'ID2':idstrain,'ypred':ytrainpred,'y':y_train})
+    #    df_restest=pd.DataFrame({'ID2':idstest,'ypred':y_pred,'y':y_test})
 
-        df_train=pd.concat([df_train,df_restrain],axis=1)
-        df_test=pd.concat([df_test,df_restest],axis=1)
+    #    df_train=pd.concat([df_train,df_restrain],axis=1)
+    #    df_test=pd.concat([df_test,df_restest],axis=1)
 
-        df_train.to_csv("./res{}train.csv".format(timestamp), index = False, header = True)
-        df_test.to_csv("./res{}test.csv".format(timestamp), index = False, header = True)
+    #    df_train.to_csv("./res{}train.csv".format(timestamp), index = False, header = True)
+    #    df_test.to_csv("./res{}test.csv".format(timestamp), index = False, header = True)

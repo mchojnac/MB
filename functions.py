@@ -204,16 +204,16 @@ def CleanLowVar(df_train,df_test,cut,toskip=[]):
     return df_train,df_test,toremove
 
 def DoPCAICA(df_train,df_test,allparams,columns,name="rest"):
-    print(columns)
     seed=allparams['xgb']['seed']
-    if allparams['others']['RemoveID']:
-        df_train.drop("ID",axis=1,inplace=True)
-        df_test.drop("ID",axis=1,inplace=True)
+    #if allparams['others']['RemoveID'] and "ID" in df_train.columns :
+    #    df_train.drop("ID",axis=1,inplace=True)
+#         df_test.drop("ID",axis=1,inplace=True)
 
     df_sum=pd.concat([df_train.drop("y",axis=1),df_test])
     #col=[]
     #if allparams['others']['removecatfromPCA']:
     #    col=["X0","X1","X2","X3","X4","X5","X6","X8"]
+    #print(columns)
     n_comp=allparams['others']['n_comp']
     pca = PCA(n_components=n_comp, random_state=seed)
     pca.fit_transform(df_sum[columns])
@@ -272,3 +272,11 @@ def RemoveDuplicatsRows(df_train,df_test):
     df_test.drop(toremovetest,inplace=True)
     df_test.reset_index(inplace=True,drop=True)
     return df_train,df_test,tostored
+
+def DumpMeanError(df,name,timestamp,sort=False):
+    df.fillna(0,inplace=True)
+    df=pd.concat([df,df.mean(axis=1).rename("mean"),df.std(axis=1).rename("std")],axis=1)
+    if sort:
+        df.sort_values(by="mean",ascending=False, inplace=True)
+    df.to_csv('./{}_{}.csv'.format(name,timestamp),index=False)
+    return df    
