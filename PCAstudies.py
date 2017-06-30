@@ -45,6 +45,8 @@ def InitSettings():
     others['dumpresidual']=False
     others['removeoutliers']=False
     others['Ntry']=100
+    others['randomsample']=True
+    others['addlabel']=True
     allparams=dict()
     allparams['xgb']=param
     allparams['others']=others
@@ -101,12 +103,12 @@ if __name__ == '__main__':
     Ntry=allparams['others']['Ntry']
 
     df_train_based,df_test_based,catcol=LoadandCleanData(allparams['others']['flagcat'],allparams['others']['flagcentering'],allparams['others']['cut'])
-    if allparams['others']['removeoutliers']:
-        df_train_based=df_train_based[df_train_based['y']<200]
+    #if allparams['others']['removeoutliers']:
+    #    df_train_based=df_train_based[df_train_based['y']<200]
     #df_train,df_test,part=RemoveDuplicatsRows(df_train,df_test)
     idstest=df_test_based['ID'].values
     idstrain=df_train_based['ID'].values
-    y_test=list(df_train_based["y"])
+    #y_test=list(df_train_based["y"])
     y_train_based =list (df_train_based["y"])
 
     if len(allparams['columns_for_remove'])>0:
@@ -123,10 +125,6 @@ if __name__ == '__main__':
             continue
         columnsPCA.append(i)
 
-    #if len(allparams['columns_for_remove'])>0:
-    #    y_train.drop(allparams['columns_for_remove'],axis=1,inplace=True)
-    #    y_test.drop(allparams['columns_for_remove'],axis=1,inplace=True)
-
 
     pdimport=pd.DataFrame()
     pdlogs1=pd.DataFrame()
@@ -134,13 +132,22 @@ if __name__ == '__main__':
     pdypred=pd.DataFrame()
     r2list=list()
     r2testlist=list()
+    loglist=list()
+    logtestlist=list()
     seed=allparams['xgb']['seed']
-    todrop={"y"}
+    todrop=["y"]
     if allparams['others']['RemoveID']:
         todrop.append("ID")
 
-    for i in tqdm(range(Ntry)):
+    if  allparams['others']['addlabel']:
+        df_train_based,df_test_based=AddLabel(df_train_based,df_test_based)
+
+    #for i in tqdm(range(Ntry)):
+    ntry=0
+    while ntry<Ntry:
         allparams['xgb']['seed']=allparams['xgb']['seed']+10
+        if allparams['others']['randomsample']:
+            seed=seed+10
         #print(i,Ntry,allparams['xgb']['seed'])
         df_train_pca,df_test_pca=DoPCAICA(df_train_based,df_test_based,allparams,columnsPCA)
         #print(df_train_pca.columns)
@@ -150,15 +157,23 @@ if __name__ == '__main__':
             if frac<=0.0 or frac>1.0:
                 allparams['others']['testfraction']=0.05
                 frac=0.05
-            print(len(df_train_pca),len(y_train_based))
+            #print(len(df_train_pca))
             df_train,df_test,y_train,y_test=train_test_split(df_train_pca,y_train_based,test_size=frac,random_state=seed)
-            print(len(df_train),len(y_train))
+            #print(len(df_train),len(y_train),len(df_test))
+            if allparams['others']['removeoutliers']:
+                df_train=df_train[df_train['y']<200]
+            y_test=list(df_test["y"])
+            y_train=list(df_train["y"])
+
+            print(len(df_train),len(y_train),len(df_test))
             dtrain = xgb.DMatrix(df_train.drop(todrop, axis=1), y_train)
             dtest = xgb.DMatrix(df_test.drop(todrop, axis=1), y_test)
             #idstest=df_test['ID'].values
             #idstrain=df_train['ID'].values
             watchlist  = [(dtrain,'log'),(dtest,'test')]
         else:
+            if allparams['others']['removeoutliers']:
+                df_train_based=df_train_based[df_train_based['y']<200]
             y_train=y_train_based
             dtrain = xgb.DMatrix(df_train_pca.drop(todrop, axis=1), y_train_based)
             if allparams['others']['RemoveID']:
@@ -178,7 +193,11 @@ if __name__ == '__main__':
         pdlogs1=pd.concat([pdlogs1,pd.DataFrame({str(i):logs['log']['rmse']})],axis=1)
         if flagtest:
             pdlogs2=pd.concat([pdlogs2,pd.DataFrame({str(i):logs['test']['rmse']})],axis=1)
-
+            logtestlist.append(logs['test']['rmse'][-1])
+        loglist.append(logs['log']['rmse'][-1])
+        if logs['log']['rmse'][-1]>7.545: #7.525
+            ntry=ntry+1
+        print(ntry,logs['log']['rmse'][-1])
         y_pred = model.predict(dtest)
         pdypred=pd.concat([pdypred,pd.DataFrame({str(i):y_pred})],axis=1)
 
@@ -231,6 +250,22 @@ if __name__ == '__main__':
         plt.hist(r2testlist,bins=np.mgrid[0.5:0.8:0.002],color='green',alpha=0.5)
     #plt.show()
     plt.savefig("./test/R2_{}.png".format(timestamp))
+    plt.clf()
+
+    if flagtest:
+        #plt.hist2d(r2list,r2testlist,bins=[np.mgrid[0.5:0.8:0.002],np.mgrid[0.5:0.8:0.002]])
+        #plt.colorbar()
+        #plt.savefig("./test/R2D_{}.png".format(timestamp))
+        #plt.hist2d(loglist,logtestlist,bins=[np.mgrid[5:9:0.2],np.mgrid[5:9:0.2]])
+        plt.plot(loglist,logtestlist,"go")
+        #plt.colorbar()
+        plt.savefig("./test/logs2D_{}.png".format(timestamp))
+        plt.clf()
+    else:
+        plt.plot(loglist,"go")
+        #plt.colorbar()
+        plt.savefig("./test/logs2D_{}.png".format(timestamp))
+        plt.clf()
 
     #if allparams['others']['dumpresidual']:
     #    dtrain2 = xgb.DMatrix(df_train.drop('y', axis=1))

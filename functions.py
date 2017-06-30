@@ -39,7 +39,6 @@ def ReadIn(filename,allparams):
                                 allparams[names[0]][names[1]]=False
     return allparams
 
-#def WriteSettings(filename,allparams,columns=None):
 #    file_object  = open(filename, "w")
 #    for i in sorted(allparams.keys()):
 #        for j in sorted(allparams[i].keys()):
@@ -92,6 +91,7 @@ def LoadandCleanData(flagcat=True,flagcentering=0,cut=0,scaleID=0):
     df_test  = pd.read_csv('test.csv')
     #total data frame
     df_train_wy=df_train.drop("y",axis=1)
+    #def WriteSettings(filename,allparams,columns=None):
     df_total=pd.concat([df_train_wy,df_test])
     maxID=max(df_total['ID'].values)
 
@@ -279,4 +279,17 @@ def DumpMeanError(df,name,timestamp,sort=False):
     if sort:
         df.sort_values(by="mean",ascending=False, inplace=True)
     df.to_csv('./{}_{}.csv'.format(name,timestamp),index=False)
-    return df    
+    return df
+
+def AddLabel(df_train,df_test):
+    df_trainlabel = pd.read_csv('trainlabel.csv')
+    df_testlabel  = pd.read_csv('testlabel.csv')
+    valuestrain=np.zeros([len(df_trainlabel),4])
+    valuestest=np.zeros([len(df_testlabel),4])
+    for i in range(len(df_trainlabel)):
+        valuestrain[i,df_trainlabel['label'].values[i]]=1
+    for i in range(len(df_testlabel)):
+        valuestest[i,df_testlabel['label'].values[i]]=1
+    df_train=pd.concat([df_train,pd.DataFrame(valuestrain,columns=['l_0','l_1','l_2','l_3'])],axis=1)
+    df_test=pd.concat([df_test,pd.DataFrame(valuestest,columns=['l_0','l_1','l_2','l_3'])],axis=1)
+    return df_train,df_test
